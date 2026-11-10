@@ -113,6 +113,1929 @@ document.addEventListener("DOMContentLoaded", () => {
   let trackFilterMode = "all"; // "all" | "risk"
 
   // Initialize
+  // ---------------------------------------------------------------------------
+  // Webcam handling – start/stop, frame loop, UI updates
+  // ---------------------------------------------------------------------------
+
+  // State for webcam control
+  const const webcamCtrl = {
+    stream: null,
+    running: false,
+    sessionId: null,
+    videoId: null,
+    loopHandle: null,
+    lastFrameTime: 0,
+    state: 'idle', // 'idle' | 'starting' | 'running' | 'stopping'
+    pendingStop: false,
+    currentFramePromise: null,
+    stopRetryAttempts: 0,
+  }; = {
+    stream: null,
+    running: false,
+    sessionId: null,
+    videoId: null,
+    loopHandle: null,
+    lastFrameTime: 0,
+  };
+
+  // Utility: strip dataURL prefix to get raw base64 string
+  function dataURLtoBase64(dataURL) {
+    const comma = dataURL.indexOf(',');
+    return comma >= 0 ? dataURL.slice(comma + 1) : dataURL;
+  }
+
+  // UI elements for the live‑camera section (added in index.html)
+  const btnStartCamera = document.getElementById('btnStartCamera');
+  const btnStopCamera = document.getElementById('btnStopCamera');
+  const camVideoStream = document.getElementById('camVideoStream');
+  const camCaptureCanvas = document.getElementById('camCaptureCanvas');
+  const camAnnotatedDisplay = document.getElementById('camAnnotatedDisplay');
+  const camPlaceholder = document.getElementById('camPlaceholder');
+  const camStatusBar = document.getElementById('camStatusBar');
+  const camStatusText = document.getElementById('camStatusText');
+  const camErrorBanner = document.getElementById('camErrorBanner');
+  const camErrorMessage = document.getElementById('camErrorMessage');
+  const camTelemetryBar = document.getElementById('camTelemetryBar');
+  const camFrameIdx = document.getElementById('camFrameIdx');
+  const camPeopleCount = document.getElementById('camPeopleCount');
+  const camTracksCount = document.getElementById('camTracksCount');
+  const camFps = document.getElementById('camFps');
+  const camIncidents = document.getElementById('camIncidents');
+  const camLiveBadge = document.getElementById('camLiveBadge');
+
+  function showCamError(msg) {
+    if (camErrorMessage) camErrorMessage.textContent = msg;
+    if (camErrorBanner) camErrorBanner.style.display = 'block';
+  }
+  function clearCamError() {
+    if (camErrorBanner) camErrorBanner.style.display = 'none';
+    if (camErrorMessage) camErrorMessage.textContent = '';
+  }
+
+  async function startWebcamSession() {
+    // Prevent duplicate starts
+    if (webcamCtrl.state !== 'idle') {
+        console.warn('Webcam start requested while not idle (state=' + webcamCtrl.state + ')');
+        return;
+    }
+    webcamCtrl.state = 'starting';
+    webcamCtrl.pendingStop = false;
+    clearCamError();
+    // Request camera permission
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
+        webcamCtrl.stream = stream;
+        if (camVideoStream) {
+            camVideoStream.srcObject = stream;
+            camVideoStream.play();
+        }
+    } catch (e) {
+        showCamError('Camera permission denied or unavailable.');
+        webcamCtrl.state = 'idle';
+        return;
+    }
+
+    // UI preparation
+    if (camPlaceholder) camPlaceholder.style.display = 'none';
+    if (camAnnotatedDisplay) camAnnotatedDisplay.style.display = 'none';
+    if (camStatusBar) camStatusBar.style.display = 'block';
+    if (camTelemetryBar) camTelemetryBar.style.display = 'block';
+    if (btnStartCamera) btnStartCamera.disabled = true;
+    if (btnStopCamera) btnStopCamera.disabled = false;
+    if (camLiveBadge) camLiveBadge.style.display = 'inline-block';
+
+    // Start backend webcam session
+    try {
+        const res = await fetch('/api/webcam/start', { method: 'POST' // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
+        if (!res.ok) throw new Error('Backend start failed');
+        const data = await res.json();
+        webcamCtrl.sessionId = data.session_id;
+        webcamCtrl.videoId = data.video_id;
+    } catch (e) {
+        showCamError('Failed to start backend webcam session: ' + e.message);
+        await stopWebcamSession(); // cleanup UI
+        webcamCtrl.state = 'idle';
+        return;
+    }
+
+    // If stop was requested during start, handle immediately
+    if (webcamCtrl.pendingStop) {
+        webcamCtrl.state = 'stopping';
+        await stopWebcamSession();
+        webcamCtrl.state = 'idle';
+        return;
+    }
+
+    // Transition to running
+    webcamCtrl.state = 'running';
+    webcamCtrl.running = true;
+    webcamCtrl.lastFrameTime = 0;
+    processWebcamLoop();
+}
+    clearCamError();
+    // Request camera permission
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
+      const webcamCtrl = {
+    stream: null,
+    running: false,
+    sessionId: null,
+    videoId: null,
+    loopHandle: null,
+    lastFrameTime: 0,
+    state: 'idle', // 'idle' | 'starting' | 'running' | 'stopping'
+    pendingStop: false,
+    currentFramePromise: null,
+    stopRetryAttempts: 0,
+  };.stream = stream;
+      if (camVideoStream) {
+        camVideoStream.srcObject = stream;
+        camVideoStream.play();
+      }
+    } catch (e) {
+      showCamError('Camera permission denied or unavailable.');
+      return;
+    }
+
+    // UI preparation
+    if (camPlaceholder) camPlaceholder.style.display = 'none';
+    if (camAnnotatedDisplay) camAnnotatedDisplay.style.display = 'none';
+    if (camStatusBar) camStatusBar.style.display = 'block';
+    if (camTelemetryBar) camTelemetryBar.style.display = 'block';
+    if (btnStartCamera) btnStartCamera.disabled = true;
+    if (btnStopCamera) btnStopCamera.disabled = false;
+    if (camLiveBadge) camLiveBadge.style.display = 'inline-block';
+
+    // Start backend webcam session
+    try {
+      const res = await fetch('/api/webcam/start', { method: 'POST' // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
+      if (!res.ok) throw new Error('Backend start failed');
+      const data = await res.json();
+      const webcamCtrl = {
+    stream: null,
+    running: false,
+    sessionId: null,
+    videoId: null,
+    loopHandle: null,
+    lastFrameTime: 0,
+    state: 'idle', // 'idle' | 'starting' | 'running' | 'stopping'
+    pendingStop: false,
+    currentFramePromise: null,
+    stopRetryAttempts: 0,
+  };.sessionId = data.session_id;
+      const webcamCtrl = {
+    stream: null,
+    running: false,
+    sessionId: null,
+    videoId: null,
+    loopHandle: null,
+    lastFrameTime: 0,
+    state: 'idle', // 'idle' | 'starting' | 'running' | 'stopping'
+    pendingStop: false,
+    currentFramePromise: null,
+    stopRetryAttempts: 0,
+  };.videoId = data.video_id;
+    } catch (e) {
+      showCamError('Failed to start backend webcam session: ' + e.message);
+      await stopWebcamSession();
+      return;
+    }
+
+    const webcamCtrl = {
+    stream: null,
+    running: false,
+    sessionId: null,
+    videoId: null,
+    loopHandle: null,
+    lastFrameTime: 0,
+    state: 'idle', // 'idle' | 'starting' | 'running' | 'stopping'
+    pendingStop: false,
+    currentFramePromise: null,
+    stopRetryAttempts: 0,
+  };.running = true;
+    const webcamCtrl = {
+    stream: null,
+    running: false,
+    sessionId: null,
+    videoId: null,
+    loopHandle: null,
+    lastFrameTime: 0,
+    state: 'idle', // 'idle' | 'starting' | 'running' | 'stopping'
+    pendingStop: false,
+    currentFramePromise: null,
+    stopRetryAttempts: 0,
+  };.lastFrameTime = 0;
+    // Kick off the sequential processing loop
+    processWebcamLoop();
+  }
+
+  async function processWebcamLoop() {
+    // Ensure we are still in running state
+    if (webcamCtrl.state !== 'running') return;
+    const now = Date.now();
+    // Throttle to approx 5-6 fps
+    if (now - webcamCtrl.lastFrameTime < 180) {
+        webcamCtrl.loopHandle = requestAnimationFrame(processWebcamLoop);
+        return;
+    }
+    webcamCtrl.lastFrameTime = now;
+
+    // Capture frame
+    const video = camVideoStream;
+    const canvas = camCaptureCanvas;
+    if (!video || !canvas) {
+        showCamError('Video or canvas element missing.');
+        await stopWebcamSession();
+        return;
+    }
+    const ctx = canvas.getContext('2d');
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataURL = canvas.toDataURL('image/jpeg', 0.8);
+    const base64Img = dataURLtoBase64(dataURL);
+
+    // Send frame – track promise to avoid overlap
+    const framePromise = fetch('/api/webcam/frame', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: base64Img }),
+    })
+    .then(async res => {
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Frame processing error');
+        }
+        return res.json();
+    })
+    .then(payload => {
+        // Update UI with annotated frame and telemetry
+        if (payload.annotated_frame && camAnnotatedDisplay) {
+            camAnnotatedDisplay.src = 'data:image/jpeg;base64,' + payload.annotated_frame;
+            camAnnotatedDisplay.style.display = 'block';
+        }
+        if (camFrameIdx) camFrameIdx.textContent = payload.frame_idx || 0;
+        if (camPeopleCount) camPeopleCount.textContent = payload.people_count || 0;
+        if (camTracksCount) camTracksCount.textContent = payload.persistent_tracks || 0;
+        if (camFps) camFps.textContent = payload.processing_fps?.toFixed(1) || '0';
+        if (camIncidents) camIncidents.textContent = payload.total_incidents || 0;
+        if (camStatusText) camStatusText.textContent = `Running – frame ${payload.frame_idx}`;
+    })
+    .catch(async e => {
+        showCamError('Error processing frame: ' + e.message);
+        await stopWebcamSession();
+    })
+    .finally(() => {
+        // Clear the stored promise when settled
+        if (webcamCtrl.currentFramePromise === framePromise) {
+            webcamCtrl.currentFramePromise = null;
+        }
+    // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
+
+    // Store the in‑flight promise
+    webcamCtrl.currentFramePromise = framePromise;
+
+    // Schedule next iteration only if we are still running
+    webcamCtrl.loopHandle = requestAnimationFrame(processWebcamLoop);
+}
+
+    if (!const webcamCtrl = {
+    stream: null,
+    running: false,
+    sessionId: null,
+    videoId: null,
+    loopHandle: null,
+    lastFrameTime: 0,
+    state: 'idle', // 'idle' | 'starting' | 'running' | 'stopping'
+    pendingStop: false,
+    currentFramePromise: null,
+    stopRetryAttempts: 0,
+  };.running) return;
+    const now = Date.now();
+    // Simple throttle – aim for ~5‑6 fps (≈180 ms per frame)
+    if (now - const webcamCtrl = {
+    stream: null,
+    running: false,
+    sessionId: null,
+    videoId: null,
+    loopHandle: null,
+    lastFrameTime: 0,
+    state: 'idle', // 'idle' | 'starting' | 'running' | 'stopping'
+    pendingStop: false,
+    currentFramePromise: null,
+    stopRetryAttempts: 0,
+  };.lastFrameTime < 180) {
+      const webcamCtrl = {
+    stream: null,
+    running: false,
+    sessionId: null,
+    videoId: null,
+    loopHandle: null,
+    lastFrameTime: 0,
+    state: 'idle', // 'idle' | 'starting' | 'running' | 'stopping'
+    pendingStop: false,
+    currentFramePromise: null,
+    stopRetryAttempts: 0,
+  };.loopHandle = requestAnimationFrame(processWebcamLoop);
+      return;
+    }
+    const webcamCtrl = {
+    stream: null,
+    running: false,
+    sessionId: null,
+    videoId: null,
+    loopHandle: null,
+    lastFrameTime: 0,
+    state: 'idle', // 'idle' | 'starting' | 'running' | 'stopping'
+    pendingStop: false,
+    currentFramePromise: null,
+    stopRetryAttempts: 0,
+  };.lastFrameTime = now;
+
+    // Capture current video frame to a hidden canvas
+    const video = camVideoStream;
+    const canvas = camCaptureCanvas;
+    if (!video || !canvas) {
+      showCamError('Video or canvas element missing.');
+      await stopWebcamSession();
+      return;
+    }
+    const ctx = canvas.getContext('2d');
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataURL = canvas.toDataURL('image/jpeg', 0.8);
+    const base64Img = dataURLtoBase64(dataURL);
+
+    // Send frame to backend – sequential, awaiting the response before next loop iteration
+    try {
+      const res = await fetch('/api/webcam/frame', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: base64Img }),
+      // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Frame processing error');
+      }
+      const payload = await res.json();
+      // Show annotated frame
+      if (payload.annotated_frame && camAnnotatedDisplay) {
+        camAnnotatedDisplay.src = 'data:image/jpeg;base64,' + payload.annotated_frame;
+        camAnnotatedDisplay.style.display = 'block';
+      }
+      // Update telemetry UI
+      if (camFrameIdx) camFrameIdx.textContent = payload.frame_idx || 0;
+      if (camPeopleCount) camPeopleCount.textContent = payload.people_count || 0;
+      if (camTracksCount) camTracksCount.textContent = payload.persistent_tracks || 0;
+      if (camFps) camFps.textContent = payload.processing_fps?.toFixed(1) || '0';
+      if (camIncidents) camIncidents.textContent = payload.total_incidents || 0;
+      if (camStatusText) camStatusText.textContent = `Running – frame ${payload.frame_idx}`;
+    } catch (e) {
+      showCamError('Error processing frame: ' + e.message);
+      await stopWebcamSession();
+      return;
+    }
+
+    // Schedule next iteration (sequential – will wait for this async function to finish)
+    const webcamCtrl = {
+    stream: null,
+    running: false,
+    sessionId: null,
+    videoId: null,
+    loopHandle: null,
+    lastFrameTime: 0,
+    state: 'idle', // 'idle' | 'starting' | 'running' | 'stopping'
+    pendingStop: false,
+    currentFramePromise: null,
+    stopRetryAttempts: 0,
+  };.loopHandle = requestAnimationFrame(processWebcamLoop);
+  }
+
+  async function stopWebcamSession() {
+    // Transition state
+    if (webcamCtrl.state === 'idle' || webcamCtrl.state === 'stopping') {
+        // Already stopped or stopping
+        console.warn('Webcam stop requested but already in state ' + webcamCtrl.state);
+        return;
+    }
+    webcamCtrl.state = 'stopping';
+    // Prevent new frames
+    webcamCtrl.running = false;
+    if (webcamCtrl.loopHandle) cancelAnimationFrame(webcamCtrl.loopHandle);
+
+    // Wait for any in‑flight frame request to settle
+    if (webcamCtrl.currentFramePromise) {
+        try {
+            await webcamCtrl.currentFramePromise;
+        } catch (e) {
+            // ignore errors – they are already handled in the loop
+        }
+        webcamCtrl.currentFramePromise = null;
+    }
+
+    // Release MediaStream safely
+    if (webcamCtrl.stream) {
+        webcamCtrl.stream.getTracks().forEach(t => t.stop());
+        webcamCtrl.stream = null;
+    }
+
+    // UI reset
+    if (camVideoStream) camVideoStream.srcObject = null;
+    if (camAnnotatedDisplay) camAnnotatedDisplay.style.display = 'none';
+    if (camPlaceholder) camPlaceholder.style.display = 'block';
+    if (camStatusBar) camStatusBar.style.display = 'none';
+    if (camTelemetryBar) camTelemetryBar.style.display = 'none';
+    if (btnStartCamera) btnStartCamera.disabled = false;
+    if (btnStopCamera) btnStopCamera.disabled = true;
+    if (camLiveBadge) camLiveBadge.style.display = 'none';
+    clearCamError();
+
+    // Helper to actually call backend stop with retries
+    const attemptStop = async (attempt = 1) => {
+        if (!webcamCtrl.sessionId) return true; // nothing to stop on server
+        try {
+            const res = await fetch('/api/webcam/stop', { method: 'POST' // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
+            if (!res.ok) throw new Error('Backend stop failed');
+            return true;
+        } catch (e) {
+            console.warn('Webcam stop attempt ' + attempt + ' failed: ' + e.message);
+            if (attempt < 3) {
+                // exponential back‑off: 1s, 2s, 4s
+                const delay = Math.pow(2, attempt - 1) * 1000;
+                await new Promise(r => setTimeout(r, delay));
+                return await attemptStop(attempt + 1);
+            }
+            // after max attempts, show error UI but keep session IDs for manual retry
+            showCamError('Failed to finalize webcam session on server after multiple attempts.');
+            return false;
+        }
+    };
+
+    const stopped = await attemptStop();
+    // Clear session identifiers only if server confirmed stop
+    if (stopped) {
+        webcamCtrl.sessionId = null;
+        webcamCtrl.videoId = null;
+    }
+
+    webcamCtrl.state = 'idle';
+}
+
+    // Stop loop
+    const webcamCtrl = {
+    stream: null,
+    running: false,
+    sessionId: null,
+    videoId: null,
+    loopHandle: null,
+    lastFrameTime: 0,
+    state: 'idle', // 'idle' | 'starting' | 'running' | 'stopping'
+    pendingStop: false,
+    currentFramePromise: null,
+    stopRetryAttempts: 0,
+  };.running = false;
+    if (const webcamCtrl = {
+    stream: null,
+    running: false,
+    sessionId: null,
+    videoId: null,
+    loopHandle: null,
+    lastFrameTime: 0,
+    state: 'idle', // 'idle' | 'starting' | 'running' | 'stopping'
+    pendingStop: false,
+    currentFramePromise: null,
+    stopRetryAttempts: 0,
+  };.loopHandle) cancelAnimationFrame(const webcamCtrl = {
+    stream: null,
+    running: false,
+    sessionId: null,
+    videoId: null,
+    loopHandle: null,
+    lastFrameTime: 0,
+    state: 'idle', // 'idle' | 'starting' | 'running' | 'stopping'
+    pendingStop: false,
+    currentFramePromise: null,
+    stopRetryAttempts: 0,
+  };.loopHandle);
+    // Release MediaStream safely
+    if (const webcamCtrl = {
+    stream: null,
+    running: false,
+    sessionId: null,
+    videoId: null,
+    loopHandle: null,
+    lastFrameTime: 0,
+    state: 'idle', // 'idle' | 'starting' | 'running' | 'stopping'
+    pendingStop: false,
+    currentFramePromise: null,
+    stopRetryAttempts: 0,
+  };.stream) {
+      const webcamCtrl = {
+    stream: null,
+    running: false,
+    sessionId: null,
+    videoId: null,
+    loopHandle: null,
+    lastFrameTime: 0,
+    state: 'idle', // 'idle' | 'starting' | 'running' | 'stopping'
+    pendingStop: false,
+    currentFramePromise: null,
+    stopRetryAttempts: 0,
+  };.stream.getTracks().forEach(t => t.stop());
+      const webcamCtrl = {
+    stream: null,
+    running: false,
+    sessionId: null,
+    videoId: null,
+    loopHandle: null,
+    lastFrameTime: 0,
+    state: 'idle', // 'idle' | 'starting' | 'running' | 'stopping'
+    pendingStop: false,
+    currentFramePromise: null,
+    stopRetryAttempts: 0,
+  };.stream = null;
+    }
+    // UI reset
+    if (camVideoStream) camVideoStream.srcObject = null;
+    if (camAnnotatedDisplay) camAnnotatedDisplay.style.display = 'none';
+    if (camPlaceholder) camPlaceholder.style.display = 'block';
+    if (camStatusBar) camStatusBar.style.display = 'none';
+    if (camTelemetryBar) camTelemetryBar.style.display = 'none';
+    if (btnStartCamera) btnStartCamera.disabled = false;
+    if (btnStopCamera) btnStopCamera.disabled = true;
+    if (camLiveBadge) camLiveBadge.style.display = 'none';
+    clearCamError();
+
+    // Finalize backend session if it was created
+    if (const webcamCtrl = {
+    stream: null,
+    running: false,
+    sessionId: null,
+    videoId: null,
+    loopHandle: null,
+    lastFrameTime: 0,
+    state: 'idle', // 'idle' | 'starting' | 'running' | 'stopping'
+    pendingStop: false,
+    currentFramePromise: null,
+    stopRetryAttempts: 0,
+  };.sessionId) {
+      try {
+        await fetch('/api/webcam/stop', { method: 'POST' // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
+      } catch (e) {
+        console.warn('Failed to finalize webcam session:', e);
+      }
+      const webcamCtrl = {
+    stream: null,
+    running: false,
+    sessionId: null,
+    videoId: null,
+    loopHandle: null,
+    lastFrameTime: 0,
+    state: 'idle', // 'idle' | 'starting' | 'running' | 'stopping'
+    pendingStop: false,
+    currentFramePromise: null,
+    stopRetryAttempts: 0,
+  };.sessionId = null;
+      const webcamCtrl = {
+    stream: null,
+    running: false,
+    sessionId: null,
+    videoId: null,
+    loopHandle: null,
+    lastFrameTime: 0,
+    state: 'idle', // 'idle' | 'starting' | 'running' | 'stopping'
+    pendingStop: false,
+    currentFramePromise: null,
+    stopRetryAttempts: 0,
+  };.videoId = null;
+    }
+  }
+
+  // Bind UI actions
+  if (btnStartCamera) btnStartCamera.addEventListener('click', startWebcamSession);
+  if (btnStopCamera) btnStopCamera.addEventListener('click', stopWebcamSession);
+
   checkSystemHealth();
   fetchSampleVideos();
   fetchIncidents();
@@ -162,7 +2085,172 @@ document.addEventListener("DOMContentLoaded", () => {
         `;
         btn.addEventListener("click", () => selectSampleVideo(sample.filename, btn));
         sampleButtonsContainer.appendChild(btn);
-      });
+      // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
     } catch (err) {
       console.warn("Could not fetch sample videos:", err);
     }
@@ -178,7 +2266,172 @@ document.addEventListener("DOMContentLoaded", () => {
     showProcessing(true, `Selecting sample video: ${filename}...`);
 
     try {
-      const res = await fetch(`/api/use-sample/${filename}`, { method: "POST" });
+      const res = await fetch(`/api/use-sample/${filename}`, { method: "POST" // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.detail || "Failed to select sample video.");
@@ -196,7 +2449,172 @@ document.addEventListener("DOMContentLoaded", () => {
         fps: meta.fps,
         duration: meta.duration_sec,
         previewUrl: meta.preview_url,
-      });
+      // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
 
       setVideoSource(videoPlayerInput, meta.preview_url, inputPlaceholder);
       resetAnnotatedPlayer();
@@ -218,16 +2636,511 @@ document.addEventListener("DOMContentLoaded", () => {
   // ==========================================================================
   dropzone.addEventListener("click", () => {
     if (!isProcessing) fileInput.click();
-  });
+  // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
 
   dropzone.addEventListener("dragover", (e) => {
     e.preventDefault();
     if (!isProcessing) dropzone.classList.add("drag-over");
-  });
+  // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
 
   dropzone.addEventListener("dragleave", () => {
     dropzone.classList.remove("drag-over");
-  });
+  // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
 
   dropzone.addEventListener("drop", (e) => {
     e.preventDefault();
@@ -237,13 +3150,343 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       handleFileSelected(e.dataTransfer.files[0]);
     }
-  });
+  // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
 
   fileInput.addEventListener("change", (e) => {
     if (e.target.files && e.target.files.length > 0) {
       handleFileSelected(e.target.files[0]);
     }
-  });
+  // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
 
   btnRemoveFile.addEventListener("click", resetUploadState);
 
@@ -275,7 +3518,172 @@ document.addEventListener("DOMContentLoaded", () => {
       const res = await fetch("/api/upload", {
         method: "POST",
         body: formData,
-      });
+      // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
 
       if (!res.ok) {
         const err = await res.json();
@@ -293,7 +3701,172 @@ document.addEventListener("DOMContentLoaded", () => {
         fps: meta.fps,
         duration: meta.duration_sec,
         previewUrl: meta.preview_url,
-      });
+      // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
 
       setVideoSource(videoPlayerInput, meta.preview_url, inputPlaceholder);
       resetAnnotatedPlayer();
@@ -392,7 +3965,172 @@ document.addEventListener("DOMContentLoaded", () => {
     }, 500);
 
     try {
-      const res = await fetch(url, { method: "POST" });
+      const res = await fetch(url, { method: "POST" // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.detail || "Video analysis failed on server.");
@@ -416,7 +4154,172 @@ document.addEventListener("DOMContentLoaded", () => {
         progressBarFill.style.width = "100%";
       }
     }
-  });
+  // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
 
   // ==========================================================================
   // 5. Results & Telemetry Rendering (Simplified, Clutter-Free)
@@ -470,7 +4373,172 @@ document.addEventListener("DOMContentLoaded", () => {
         const risk = (b.risk_level || "").toLowerCase();
         const cname = (b.class_name || "").toLowerCase();
         return risk === "high" || cname.includes("fight") || cname.includes("fall");
-      });
+      // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
     }
 
     if (filtered.length === 0) {
@@ -486,7 +4554,172 @@ document.addEventListener("DOMContentLoaded", () => {
       filtered.forEach(person => {
         const card = createPersonTelemetryCard(person);
         trackedPersonsGrid.appendChild(card);
-      });
+      // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
     }
   }
 
@@ -497,7 +4730,172 @@ document.addEventListener("DOMContentLoaded", () => {
       filterTracksAll.classList.add("active");
       if (filterTracksRisk) filterTracksRisk.classList.remove("active");
       renderTrackedPeopleGrid();
-    });
+    // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
   }
 
   if (filterTracksRisk) {
@@ -506,7 +4904,172 @@ document.addEventListener("DOMContentLoaded", () => {
       filterTracksRisk.classList.add("active");
       if (filterTracksAll) filterTracksAll.classList.remove("active");
       renderTrackedPeopleGrid();
-    });
+    // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
   }
 
   // Live Scrubber Synchronization on Video Playback
@@ -524,7 +5087,172 @@ document.addEventListener("DOMContentLoaded", () => {
       if (curFrame >= p.first_frame && curFrame <= p.last_frame) {
         activeNow++;
       }
-    });
+    // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
 
     if (liveFramePeopleCount) {
       liveFramePeopleCount.textContent = `${activeNow} detected in frame`;
@@ -676,7 +5404,172 @@ document.addEventListener("DOMContentLoaded", () => {
       const isExpanded = detailsContainer.style.display !== "none";
       detailsContainer.style.display = isExpanded ? "none" : "flex";
       btnToggle.innerHTML = isExpanded ? "<span>▼ Full Telemetry</span>" : "<span>▲ Collapse</span>";
-    });
+    // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
 
     // Person Linkage Button Event
     const btnLink = card.querySelector(`#btn-link-person-${person.track_id}`);
@@ -755,7 +5648,172 @@ document.addEventListener("DOMContentLoaded", () => {
       console.warn("Annotated player error:", videoPlayerAnnotated.error);
       showError("The browser encountered an error decoding or playing the annotated output video.");
     }
-  });
+  // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
 
   function resetAnnotatedPlayer() {
     setVideoSource(videoPlayerAnnotated, null, annotatedPlaceholder);
@@ -903,7 +5961,172 @@ document.addEventListener("DOMContentLoaded", () => {
         const trackMatch = inc.track_id !== null && inc.track_id.toString().includes(q);
         const fileMatch = (inc.source_filename || "").toLowerCase().includes(q);
         return idMatch || vidMatch || trackMatch || fileMatch;
-      });
+      // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
     }
     renderIncidentsTable(filtered);
   }
@@ -992,7 +6215,172 @@ document.addEventListener("DOMContentLoaded", () => {
       row.appendChild(tdActions);
 
       incidentsTableBody.appendChild(row);
-    });
+    // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
   }
 
   // ==========================================================================
@@ -1071,7 +6459,172 @@ document.addEventListener("DOMContentLoaded", () => {
             reviewer_notes: notes,
             reviewer_name: reviewer,
           }),
+        // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
         });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
 
         if (!res.ok) {
           const err = await res.json();
@@ -1085,7 +6638,172 @@ document.addEventListener("DOMContentLoaded", () => {
       } catch (err) {
         showToast(err.message, "error");
       }
-    });
+    // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
   }
 
   // ==========================================================================
@@ -1110,7 +6828,172 @@ document.addEventListener("DOMContentLoaded", () => {
             opt.value = p.id;
             opt.textContent = `${p.full_name} (${p.official_id}) — ${p.role.toUpperCase()}`;
             selectVerifiedPerson.appendChild(opt);
-          });
+          // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
         }
       }
     } catch (e) {}
@@ -1149,7 +7032,172 @@ document.addEventListener("DOMContentLoaded", () => {
             linked_by: reviewer,
             notes: notes,
           }),
+        // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
         });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
 
         if (!res.ok) {
           const err = await res.json();
@@ -1161,7 +7209,172 @@ document.addEventListener("DOMContentLoaded", () => {
       } catch (err) {
         showToast(err.message, "error");
       }
-    });
+    // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
   }
 
   // ==========================================================================
@@ -1182,7 +7395,172 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.target === incidentReviewModal) closeReviewModal();
     if (e.target === evidenceZoomModal) closeZoomModal();
     if (e.target === linkPersonModal) closeLinkPersonModal();
-  });
+  // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
 
   function showToast(message, type = "success") {
     if (!toastContainer) return;
@@ -1208,7 +7586,172 @@ document.addEventListener("DOMContentLoaded", () => {
       fetchIncidents();
       fetchIncidentStats();
       showToast("Incident log refreshed.", "success");
-    });
+    // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
   }
 
   // ==========================================================================
@@ -1259,7 +7802,172 @@ document.addEventListener("DOMContentLoaded", () => {
       camStream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
         audio: false,
-      });
+      // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
     } catch (err) {
       let msg = "Camera access denied.";
       if (err.name === "NotAllowedError") {
@@ -1282,12 +7990,342 @@ document.addEventListener("DOMContentLoaded", () => {
     // Wait for video to be ready
     await new Promise((resolve) => {
       camVideoStream.onloadedmetadata = () => resolve();
-    });
+    // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
 
     // Start backend session
     camStatusText.textContent = "Starting analysis session...";
     try {
-      const res = await fetch("/api/webcam/start", { method: "POST" });
+      const res = await fetch("/api/webcam/start", { method: "POST" // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.detail || "Failed to start webcam session.");
@@ -1364,7 +8402,172 @@ document.addEventListener("DOMContentLoaded", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ image: dataUrl }),
-      });
+      // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -1452,7 +8655,172 @@ document.addEventListener("DOMContentLoaded", () => {
           <span class="prediction-tag ${eClass}" style="font-size:0.72rem;">● Face: ${eText}</span>
         </div>
       `;
-    });
+    // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
     camPeopleList.innerHTML = html;
   }
 
@@ -1463,7 +8831,172 @@ document.addEventListener("DOMContentLoaded", () => {
     // Stop backend session
     if (camSessionId) {
       try {
-        const res = await fetch("/api/webcam/stop", { method: "POST" });
+        const res = await fetch("/api/webcam/stop", { method: "POST" // ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
+
+});
         if (res.ok) {
           const data = await res.json();
           showToast(`Webcam session ended: ${data.total_frames_processed} frames processed, ${data.recorded_incidents_count} incidents.`, "success");
@@ -1512,5 +9045,170 @@ document.addEventListener("DOMContentLoaded", () => {
     if (camErrorBanner) camErrorBanner.style.display = "none";
     if (camErrorMessage) camErrorMessage.textContent = "";
   }
+
+// ==================== CCTV Integration ====================
+
+// State controller for CCTV sessions
+const cctvCtrl = {
+    sessionId: null,
+    polling: false,
+    pollHandle: null,
+    url: '',
+    name: ''
+};
+
+function showCCTVError(msg) {
+    const banner = document.getElementById('cctvErrorBanner');
+    const message = document.getElementById('cctvErrorMessage');
+    if (message) message.textContent = msg;
+    if (banner) banner.style.display = 'block';
+}
+function clearCCTVError() {
+    const banner = document.getElementById('cctvErrorBanner');
+    if (banner) banner.style.display = 'none';
+}
+function updateCCTVStatus(text) {
+    const bar = document.getElementById('cctvStatusBar');
+    const span = document.getElementById('cctvStatusText');
+    if (bar) bar.style.display = 'block';
+    if (span) span.textContent = text;
+}
+function clearCCTVStatus() {
+    const bar = document.getElementById('cctvStatusBar');
+    if (bar) bar.style.display = 'none';
+}
+function setLiveBadge(visible) {
+    const badge = document.getElementById('cctvLiveBadge');
+    if (badge) badge.style.display = visible ? 'inline-block' : 'none';
+}
+function showAnnotatedFrame(b64) {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) {
+        img.src = 'data:image/jpeg;base64,' + b64;
+        img.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+}
+function hideAnnotatedFrame() {
+    const img = document.getElementById('cctvAnnotatedDisplay');
+    const placeholder = document.getElementById('cctvPlaceholder');
+    if (img) img.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'block';
+}
+
+async function startCCTV() {
+    clearCCTVError();
+    const urlInput = document.getElementById('cctvUrlInput');
+    const nameInput = document.getElementById('cctvNameInput');
+    if (!urlInput) return;
+    const rtspUrl = urlInput.value.trim();
+    const camName = nameInput ? nameInput.value.trim() : '';
+    if (!rtspUrl) { showCCTVError('RTSP URL is required'); return; }
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    updateCCTVStatus('Starting session…');
+    setLiveBadge(false);
+    try {
+        const res = await fetch('/api/cctv/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rtsp_url: rtspUrl, camera_name: camName })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed');
+        }
+        const data = await res.json();
+        cctvCtrl.sessionId = data.session_id;
+        cctvCtrl.url = rtspUrl;
+        cctvCtrl.name = camName;
+        document.getElementById('cctvSessionId').textContent = data.session_id;
+        document.getElementById('cctvSessionInfo').hidden = false;
+        setLiveBadge(true);
+        updateCCTVStatus('Running');
+        cctvCtrl.polling = true;
+        pollCCTVFrame();
+    } catch (e) {
+        showCCTVError('Start failed: ' + e.message);
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        clearCCTVStatus();
+    }
+}
+
+async function stopCCTV() {
+    clearCCTVError();
+    const stopBtn = document.getElementById('btnStopCCTV');
+    const startBtn = document.getElementById('btnStartCCTV');
+    if (stopBtn) stopBtn.disabled = true;
+    if (cctvCtrl.sessionId) {
+        try {
+            await fetch('/api/cctv/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: cctvCtrl.sessionId })
+            });
+        } catch (_) {}
+    }
+    cctvCtrl.sessionId = null;
+    cctvCtrl.polling = false;
+    if (cctvCtrl.pollHandle) clearTimeout(cctvCtrl.pollHandle);
+    hideAnnotatedFrame();
+    setLiveBadge(false);
+    clearCCTVStatus();
+    document.getElementById('cctvSessionInfo').hidden = true;
+    if (startBtn) startBtn.disabled = false;
+}
+
+async function pollCCTVFrame() {
+    if (!cctvCtrl.polling || !cctvCtrl.sessionId) return;
+    try {
+        const res = await fetch(`/api/cctv/frame?session_id=${cctvCtrl.sessionId}`);
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data.frame_base64) showAnnotatedFrame(data.frame_base64);
+        } else if (res.status === 204) {
+            // no frame yet
+        } else {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error retrieving frame');
+        }
+    } catch (e) {
+        showCCTVError('Frame fetch error: ' + e.message);
+        await stopCCTV();
+        return;
+    }
+    cctvCtrl.pollHandle = setTimeout(pollCCTVFrame, 200);
+}
+
+async function restoreCCTVSession() {
+    try {
+        const res = await fetch('/api/cctv/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active_sessions && data.active_sessions.length > 0) {
+            const sess = data.active_sessions[0];
+            cctvCtrl.sessionId = sess.session_id;
+            document.getElementById('cctvSessionId').textContent = sess.session_id;
+            document.getElementById('cctvSessionInfo').hidden = false;
+            setLiveBadge(sess.status === 'running');
+            updateCCTVStatus('Running (restored)');
+            cctvCtrl.polling = true;
+            pollCCTVFrame();
+        }
+    } catch (_) {}
+}
+
+// Attach listeners after DOM ready (ensuring they run after existing listeners)
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('btnStartCCTV');
+    const stopBtn = document.getElementById('btnStopCCTV');
+    if (startBtn) startBtn.addEventListener('click', startCCTV);
+    if (stopBtn) stopBtn.addEventListener('click', stopCCTV);
+    restoreCCTVSession();
+});
 
 });

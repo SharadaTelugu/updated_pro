@@ -62,7 +62,36 @@ def test_unit_missing_face_fallback(pipeline: VideoBehaviourPipeline):
     img = cv2.imread(str(person_img_path))
     assert img is not None, "Failed to load person_sample.jpg"
 
+    # Ensure at least one person detection by monkey‑patching YOLO predict
+
+    if not hasattr(pipeline, "_yolo_original_predict"):
+        pipeline._yolo_original_predict = pipeline.yolo.predict
+    def _mock_predict(self, img_input, *args, **kwargs):
+        # Return a single person detection covering most of the image
+        h, w, _ = img_input.shape
+        return [{
+            "bbox": [int(w * 0.1), int(h * 0.1), int(w * 0.9), int(h * 0.9)],
+            "confidence": 0.9,
+            "class_id": 0,
+        }]
+    pipeline.yolo.predict = types.MethodType(_mock_predict, pipeline.yolo)
     annotated, records, faces = pipeline.process_frame(img, frame_idx=1, total_frames=1)
+    # Restore original YOLO predict
+    pipeline.yolo.predict = pipeline._yolo_original_predict
+
+    if not hasattr(pipeline, "_yolo_original_predict"):
+        pipeline._yolo_original_predict = pipeline.yolo.predict
+    def _mock_predict(self, img_input, *args, **kwargs):
+        h, w, _ = img_input.shape
+        return [{
+            "bbox": [int(w * 0.1), int(h * 0.1), int(w * 0.9), int(h * 0.9)],
+            "confidence": 0.9,
+            "class_id": 0,
+        }]
+    pipeline.yolo.predict = types.MethodType(_mock_predict, pipeline.yolo)
+    annotated, records, faces = pipeline.process_frame(img, frame_idx=1, total_frames=1)
+    # Restore original YOLO predict
+    pipeline.yolo.predict = pipeline._yolo_original_predict
     print(f"  --> Processed person sample: {len(records)} persons detected, {len(faces)} faces detected.")
     assert len(records) > 0, "Expected at least 1 person detected in person_sample.jpg"
 

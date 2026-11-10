@@ -22,6 +22,11 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 from mediapipe import Image as MPImage
 import tensorflow as tf
+# Debug flag for diagnostic logging
+DEBUG_BEHAVIOUR = True  # Set to True to enable detailed console logs
+def _debug_log(msg):
+    if DEBUG_BEHAVIOUR:
+        print(msg)
 
 
 CLASS_NAMES = {
@@ -166,6 +171,8 @@ class BehaviourTracker:
         # Good frame → reset fail counter and add features
         self.fail_count[track_id] = 0
         self.buffers[track_id].append(features)
+        _debug_log(f"[BehaviourTracker] Track {track_id} | pose OK | buffer {len(self.buffers[track_id])}/{self.sequence_length}")
+        
 
         # Still collecting
         if len(self.buffers[track_id]) < self.sequence_length:
@@ -189,6 +196,7 @@ class BehaviourTracker:
 
         # Save as last good prediction
         self.last_good_pred[track_id] = smoothed
+        _debug_log(f"[BehaviourTracker] Track {track_id} | prediction {smoothed['class_name']} (id {smoothed['class_id']}) confidence {smoothed['confidence']}")
         return smoothed
 
     def _handle_failed_frame(self, track_id: int) -> Optional[Dict]:
@@ -197,6 +205,7 @@ class BehaviourTracker:
             return None
 
         self.fail_count[track_id] = self.fail_count.get(track_id, 0) + 1
+        _debug_log(f"[BehaviourTracker] Track {track_id} | fail count {self.fail_count[track_id]} | buffer {len(self.buffers[track_id])}/{self.sequence_length}")
         collected = len(self.buffers[track_id])
 
         # Too many consecutive failures → clear buffer
@@ -204,6 +213,7 @@ class BehaviourTracker:
             self.buffers[track_id].clear()
             self.fail_count[track_id] = 0
             self.last_good_pred.pop(track_id, None)
+            _debug_log(f"[BehaviourTracker] Track {track_id} | buffer cleared after {self.max_fail_frames} consecutive failures")
             return {
                 "status": "unavailable",
                 "class_id": -1,

@@ -38,6 +38,7 @@ if sys.stdout and hasattr(sys.stdout, "reconfigure"):
 from backend.app.services.face_service import FaceDetectionService
 from backend.app.services.emotion_service import EmotionInferenceService
 from backend.app.services.association_service import FacePersonAssociationService
+from .risk_aggregator import RiskAggregator
 
 
 def get_behaviour_tracker_class():
@@ -191,8 +192,15 @@ class VideoBehaviourPipeline:
         self.yolo_iou = yolo_iou
         self.max_missed_frames = max_missed_frames
 
-        # Track management
+        # Initialize tracking state
+        self.track_bboxes: Dict[int, List[int]] = {}
+        self.provisional_tracks: Dict[int, Dict[str, Any]] = {}
+        self._next_provisional_id: int = -1000  # start deep negative IDs for provisional tracks
+
         self.last_seen_frame: Dict[int, int] = {}
+        # Initialize RiskAggregator (Phase 2) – handles behaviour + emotion weighting
+        from .risk_aggregator import RiskAggregator
+        self.risk_aggregator = RiskAggregator(smoothing_window=5)
 
         # 1. Initialize YOLO11 Person Tracker
         print(f"[VideoBehaviourPipeline] Loading YOLO11 from {self.yolo_model_path.name}...")
@@ -290,9 +298,44 @@ class VideoBehaviourPipeline:
 
             for i, (box, det_conf) in enumerate(zip(boxes, confs)):
                 raw_tid = track_ids[i] if i < len(track_ids) else None
-                # If YOLO did not assign a track ID, assign temporary pseudo ID
                 is_temporary_id = raw_tid is None
-                track_id = int(raw_tid) if not is_temporary_id else -(i + 1)
+                # Determine track_id using provisional matching when needed
+                if not is_temporary_id:
+                    track_id = int(raw_tid)
+                else:
+                    # Attempt to match detection to existing track using IoU & centroid distance
+                    matched_id = None
+                    best_iou = 0.0
+                    for tid, prev_bbox in self.track_bboxes.items():
+                        # Compute IoU
+                        inter_x1 = max(prev_bbox[0], int(box[0]))
+                        inter_y1 = max(prev_bbox[1], int(box[1]))
+                        inter_x2 = min(prev_bbox[2], int(box[2]))
+                        inter_y2 = min(prev_bbox[3], int(box[3]))
+                        inter_w = max(0, inter_x2 - inter_x1)
+                        inter_h = max(0, inter_y2 - inter_y1)
+                        inter_area = inter_w * inter_h
+                        area_a = (prev_bbox[2] - prev_bbox[0]) * (prev_bbox[3] - prev_bbox[1])
+                        area_b = (int(box[2]) - int(box[0])) * (int(box[3]) - int(box[1]))
+                        union = area_a + area_b - inter_area
+                        iou_score = float(inter_area) / float(union) if union > 0 else 0.0
+                        if iou_score > 0.5 and iou_score > best_iou:
+                            # centroid distance check (10% of max dimension)
+                            cx1 = (prev_bbox[0] + prev_bbox[2]) / 2.0
+                            cy1 = (prev_bbox[1] + prev_bbox[3]) / 2.0
+                            cx2 = (int(box[0]) + int(box[2])) / 2.0
+                            cy2 = (int(box[1]) + int(box[3])) / 2.0
+                            dist = ((cx1 - cx2) ** 2 + (cy1 - cy2) ** 2) ** 0.5
+                            if dist <= max(w, h) * 0.1:
+                                best_iou = iou_score
+                                matched_id = tid
+                    if matched_id is not None:
+                        track_id = matched_id
+                    else:
+                        # Assign new provisional ID
+                        track_id = self._next_provisional_id
+                        self._next_provisional_id -= 1
+                        self.provisional_tracks[track_id] = {"age": 0, "stable": False}
 
                 # Clamp bounding box coordinates safely
                 x1 = max(0, min(w - 1, int(box[0])))
@@ -304,10 +347,12 @@ class VideoBehaviourPipeline:
                 if (x2 - x1) < 10 or (y2 - y1) < 10:
                     continue
 
-                if not is_temporary_id:
-                    active_tids_in_frame.add(track_id)
-                    self.last_seen_frame[track_id] = frame_idx
+                # Record latest bbox for matching
+                self.track_bboxes[track_id] = [x1, y1, x2, y2]
 
+                # Treat all tracks (persistent or provisional) as active
+                active_tids_in_frame.add(track_id)
+                self.last_seen_frame[track_id] = frame_idx
                 # Safe person crop extraction with 8% contextual padding for MediaPipe Pose
                 pad_w = int((x2 - x1) * 0.08)
                 pad_h = int((y2 - y1) * 0.08)
