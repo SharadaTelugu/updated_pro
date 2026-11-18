@@ -230,15 +230,25 @@ class IncidentDatabase:
     # Analysis Sessions
     # -------------------------------------------------------------------------
 
-    def create_session(self, session_data: Dict[str, Any]) -> str:
+    def create_session(
+        self,
+        session_data: Optional[Dict[str, Any]] = None,
+        session_id: Optional[str] = None,
+        meta: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> str:
         """Creates a new analysis session record."""
-        session_id = session_data.get("id") or f"ses_{uuid.uuid4().hex[:10]}"
+        data = dict(session_data or {})
+        data.update(kwargs)
+        sid = session_id or data.get("id") or f"ses_{uuid.uuid4().hex[:10]}"
+        vid = data.get("video_id") or sid
+        source_fn = data.get("source_filename") or (meta.get("source") if meta else None) or "Live Stream"
         now = time.time()
-        metrics = session_data.get("metrics_json")
+        metrics = data.get("metrics_json") or meta or {}
         if isinstance(metrics, dict):
             metrics_str = json.dumps(metrics)
         else:
-            metrics_str = metrics or "{}"
+            metrics_str = str(metrics) if metrics else "{}"
 
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -247,39 +257,75 @@ class IncidentDatabase:
                     id, video_id, source_filename, total_frames, fps, status, created_at, completed_at, metrics_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
             """, (
-                session_id,
-                session_data["video_id"],
-                session_data["source_filename"],
-                int(session_data.get("total_frames", 0)),
-                float(session_data.get("fps", 25.0)),
-                session_data.get("status", "processing"),
-                float(session_data.get("created_at", now)),
-                session_data.get("completed_at"),
+                sid,
+                vid,
+                source_fn,
+                int(data.get("total_frames", 0)),
+                float(data.get("fps", 25.0)),
+                data.get("status", "processing" if not meta else "running"),
+                float(data.get("created_at", meta.get("started_at") if meta else now)),
+                data.get("completed_at"),
                 metrics_str,
             ))
             conn.commit()
-        return session_id
+        return sid
 
     def update_session(
         self,
         session_id: str,
-        status: str,
+        status: Any = None,
         completed_at: Optional[float] = None,
         metrics: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ) -> bool:
         """Updates session status, completion timestamp, and summary metrics."""
-        metrics_str = json.dumps(metrics) if isinstance(metrics, dict) else metrics
+        status_str = "completed"
+        extra_metrics: Dict[str, Any] = {}
+        if isinstance(status, dict):
+            extra_metrics.update(status)
+            status_str = status.get("status", "completed")
+        elif isinstance(status, str):
+            status_str = status
+
+        if isinstance(metrics, dict):
+            extra_metrics.update(metrics)
+        if kwargs:
+            extra_metrics.update(kwargs)
+
+        # Merge with existing metrics if available
+        existing = self.get_session(session_id)
+        if existing and existing.get("metrics"):
+            merged_metrics = dict(existing["metrics"])
+            merged_metrics.update(extra_metrics)
+        else:
+            merged_metrics = extra_metrics
+
+        metrics_str = json.dumps(merged_metrics) if merged_metrics else None
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 UPDATE analysis_sessions
-                SET status = ?,
+                SET status = COALESCE(?, status),
                     completed_at = COALESCE(?, completed_at),
                     metrics_json = COALESCE(?, metrics_json)
                 WHERE id = ?;
-            """, (status, completed_at, metrics_str, session_id))
+            """, (status_str, completed_at, metrics_str, session_id))
             conn.commit()
             return cursor.rowcount > 0
+
+    def get_session_meta(self, session_id: str) -> Dict[str, Any]:
+        """Retrieves session metadata including parsed JSON metrics fields."""
+        sess = self.get_session(session_id)
+        if not sess:
+            return {}
+        meta: Dict[str, Any] = {}
+        if sess.get("metrics") and isinstance(sess["metrics"], dict):
+            meta.update(sess["metrics"])
+        for k, v in sess.items():
+            if k not in meta:
+                meta[k] = v
+        return meta
 
     def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Retrieves a single session with parsed metrics."""
